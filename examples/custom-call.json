@@ -1,0 +1,7 @@
+{
+  "to": "0xYourContractAddress",
+  "value": "0",
+  "data": "0x06fdde03",
+  "operation": 0
+}
+
