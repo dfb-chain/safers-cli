@@ -29,6 +29,11 @@ pub fn get_chain_config(chain: &str) -> Result<(u64, Address, Address), Box<dyn 
             "0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2".parse()?, // ProxyFactory
             "0xd9Db270c1B5E3Bd161E8c8503c55cEABeE709552".parse()?, // Singleton
         )),
+        "polygon" | "matic" => Ok((
+            137,
+            "0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2".parse()?, // ProxyFactory
+            "0xd9Db270c1B5E3Bd161E8c8503c55cEABeE709552".parse()?, // Singleton
+        )),
         _ => Err(format!("Unsupported chain: {}", chain).into()),
     }
 }
@@ -39,6 +44,7 @@ pub fn get_safe_service_url(chain: &str) -> Result<String, Box<dyn std::error::E
         "sepolia" => Ok("https://safe-transaction-sepolia.safe.global".to_string()),
         "mainnet" | "ethereum" => Ok("https://safe-transaction-mainnet.safe.global".to_string()),
         "base" => Ok("https://safe-transaction-base.safe.global".to_string()),
+        "polygon" | "matic" => Ok("https://safe-transaction-polygon.safe.global".to_string()),
         _ => Err(format!("No Safe Transaction Service for chain: {}", chain).into()),
     }
 }

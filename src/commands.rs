@@ -7,6 +7,7 @@ use std::fs;
 use std::str::FromStr;
 
 use crate::contracts::{ERC20, ERC721, GnosisSafe, ProxyFactory};
+use crate::hardware_wallet::{HardwareWalletType, HardwareWalletSigner};
 use crate::signatures;
 use crate::types::{TxBuilderJson, SafeTxServiceRequest};
 use crate::utils::{
@@ -777,6 +778,7 @@ pub async fn tx_propose(
             "sepolia" => format!("https://app.safe.global/transactions/queue?safe=sep:{}", safe_address),
             "mainnet" | "ethereum" => format!("https://app.safe.global/transactions/queue?safe=eth:{}", safe_address),
             "base" => format!("https://app.safe.global/transactions/queue?safe=base:{}", safe_address),
+            "polygon" | "matic" => format!("https://app.safe.global/transactions/queue?safe=matic:{}", safe_address),
             _ => format!("https://app.safe.global/transactions/queue?safe={}", safe_address),
         };
         
@@ -931,6 +933,275 @@ pub async fn tx_reject(
             "sepolia" => format!("https://app.safe.global/transactions/queue?safe=sep:{}", safe_address),
             "mainnet" | "ethereum" => format!("https://app.safe.global/transactions/queue?safe=eth:{}", safe_address),
             "base" => format!("https://app.safe.global/transactions/queue?safe=base:{}", safe_address),
+            "polygon" | "matic" => format!("https://app.safe.global/transactions/queue?safe=matic:{}", safe_address),
+            _ => format!("https://app.safe.global/transactions/queue?safe={}", safe_address),
+        };
+        
+        println!("   {}", safe_ui_url);
+        println!("\n📝 Safe Transaction Hash: 0x{:x}", safe_tx_hash);
+        println!("\n✨ Other signers can now approve and execute this rejection");
+        println!("💡 Executing this will cancel all conflicting transactions with nonce {}", rejection_nonce);
+        
+    } else {
+        let error_text = response.text().await?;
+        println!("❌ Failed to propose rejection");
+        println!("Status: {}", status);
+        println!("Error: {}", error_text);
+        return Err(format!("Transaction service error: {}", error_text).into());
+    }
+    
+    Ok(())
+}
+
+// ============================================================================
+// Hardware Wallet Commands
+// ============================================================================
+
+/// Propose a Safe transaction using a hardware wallet
+pub async fn tx_propose_hw(
+    safe_address: &str,
+    chain: &str,
+    node_url: &str,
+    json_file: &str,
+    wallet_type_str: &str,
+    derivation_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let safe: Address = safe_address.parse()?;
+    let (chain_id, _, _) = get_chain_config(chain)?;
+    let service_url = get_safe_service_url(chain)?;
+
+    // Parse wallet type
+    let wallet_type: HardwareWalletType = wallet_type_str.parse()?;
+    
+    // Connect to hardware wallet
+    let hw_signer = HardwareWalletSigner::connect(wallet_type, derivation_path.to_string())?;
+    let sender_address = hw_signer.address();
+
+    // Read and parse JSON file
+    let json_content = fs::read_to_string(json_file)?;
+    let tx_json: TxBuilderJson = serde_json::from_str(&json_content)?;
+
+    let to_addr: Address = tx_json.to.parse()?;
+    let value_u256 = U256::from_str(&tx_json.value)?;
+    
+    let calldata: Bytes = if let Some(data_str) = tx_json.data {
+        let data_hex = data_str.strip_prefix("0x").unwrap_or(&data_str);
+        hex::decode(data_hex)?.into()
+    } else {
+        Bytes::new()
+    };
+
+    let operation_u8 = tx_json.operation.unwrap_or(0);
+    
+    // Show decoded function signature
+    maybe_decode_and_display(&calldata);
+
+    // Get provider (just to validate connection)
+    let _temp_provider = ProviderBuilder::new().on_builtin(node_url).await?;
+    
+    // Get Safe nonce from transaction service or use provided nonce
+    let nonce = if let Some(n) = tx_json.nonce {
+        n
+    } else {
+        get_safe_nonce_from_service(&service_url, safe_address).await?
+    };
+    
+    println!("📋 Preparing transaction proposal...");
+    println!("  Safe: {}", safe_address);
+    println!("  Chain: {} (ID: {})", chain, chain_id);
+    println!("  Safe Nonce: {}", nonce);
+    println!("  Sender: {}", sender_address);
+    
+    // Generate Safe transaction hash
+    let safe_tx_hash = generate_safe_tx_hash(
+        safe,
+        chain_id,
+        to_addr,
+        value_u256,
+        &calldata,
+        operation_u8,
+        U256::ZERO, // safeTxGas
+        U256::ZERO, // baseGas
+        U256::ZERO, // gasPrice
+        Address::ZERO, // gasToken
+        Address::ZERO, // refundReceiver
+        U256::from(nonce),
+    );
+    
+    println!("  Safe Tx Hash: 0x{:x}", safe_tx_hash);
+    
+    // Sign the transaction hash with hardware wallet
+    let signature_bytes = hw_signer.sign_safe_tx_hash(safe_tx_hash)?;
+    let signature_hex = format!("0x{}", hex::encode(signature_bytes));
+    
+    // Prepare API request (addresses must be checksummed)
+    let request = SafeTxServiceRequest {
+        to: to_addr.to_checksum(None),
+        value: value_u256.to_string(),
+        data: if calldata.is_empty() {
+            "0x".to_string()
+        } else {
+            format!("0x{}", hex::encode(calldata.as_ref()))
+        },
+        operation: operation_u8,
+        safe_tx_gas: "0".to_string(),
+        base_gas: "0".to_string(),
+        gas_price: "0".to_string(),
+        gas_token: Address::ZERO.to_checksum(None),
+        refund_receiver: Address::ZERO.to_checksum(None),
+        nonce: nonce.to_string(),
+        contract_transaction_hash: format!("0x{:x}", safe_tx_hash),
+        sender: sender_address.to_checksum(None),
+        signature: signature_hex,
+        origin: Some("safers-cli".to_string()),
+    };
+    
+    // Submit to Safe Transaction Service
+    println!("\n📤 Submitting proposal to Safe Transaction Service...");
+    
+    let client = reqwest::Client::new();
+    let api_url = format!("{}/api/v1/safes/{}/multisig-transactions/", service_url, safe_address);
+    
+    let response = client
+        .post(&api_url)
+        .json(&request)
+        .send()
+        .await?;
+    
+    let status = response.status();
+    
+    if status.is_success() {
+        println!("✅ Transaction proposed successfully!");
+        println!("\n🔗 View in Safe UI:");
+        
+        let safe_ui_url = match chain.to_lowercase().as_str() {
+            "sepolia" => format!("https://app.safe.global/transactions/queue?safe=sep:{}", safe_address),
+            "mainnet" | "ethereum" => format!("https://app.safe.global/transactions/queue?safe=eth:{}", safe_address),
+            "base" => format!("https://app.safe.global/transactions/queue?safe=base:{}", safe_address),
+            "polygon" | "matic" => format!("https://app.safe.global/transactions/queue?safe=matic:{}", safe_address),
+            _ => format!("https://app.safe.global/transactions/queue?safe={}", safe_address),
+        };
+        
+        println!("   {}", safe_ui_url);
+        println!("\n📝 Safe Transaction Hash: 0x{:x}", safe_tx_hash);
+        println!("\n✨ Other signers can now approve this transaction in the Safe UI");
+        
+    } else {
+        let error_text = response.text().await?;
+        println!("❌ Failed to propose transaction");
+        println!("Status: {}", status);
+        println!("Error: {}", error_text);
+        return Err(format!("Transaction service error: {}", error_text).into());
+    }
+    
+    Ok(())
+}
+
+/// Propose a rejection transaction using a hardware wallet
+pub async fn tx_reject_hw(
+    safe_address: &str,
+    chain: &str,
+    node_url: &str,
+    nonce: Option<u64>,
+    wallet_type_str: &str,
+    derivation_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let safe: Address = safe_address.parse()?;
+    let (chain_id, _, _) = get_chain_config(chain)?;
+    let service_url = get_safe_service_url(chain)?;
+
+    // Parse wallet type
+    let wallet_type: HardwareWalletType = wallet_type_str.parse()?;
+    
+    // Connect to hardware wallet
+    let hw_signer = HardwareWalletSigner::connect(wallet_type, derivation_path.to_string())?;
+    let sender_address = hw_signer.address();
+
+    // Get provider (just to validate connection)
+    let _temp_provider = ProviderBuilder::new().on_builtin(node_url).await?;
+    
+    // Get Safe nonce from transaction service or use provided nonce
+    let rejection_nonce = if let Some(n) = nonce {
+        n
+    } else {
+        get_safe_nonce_from_service(&service_url, safe_address).await?
+    };
+    
+    println!("🚫 Preparing on-chain rejection with hardware wallet...");
+    println!("  Safe: {}", safe_address);
+    println!("  Chain: {} (ID: {})", chain, chain_id);
+    println!("  Nonce to reject: {}", rejection_nonce);
+    println!("  Sender: {}", sender_address);
+    
+    // On-chain rejection: send 0 ETH to the Safe itself with empty data
+    let to_addr = safe;
+    let value_u256 = U256::ZERO;
+    let calldata = Bytes::new();
+    let operation_u8 = 0u8; // Call operation
+    
+    // Generate Safe transaction hash
+    let safe_tx_hash = generate_safe_tx_hash(
+        safe,
+        chain_id,
+        to_addr,
+        value_u256,
+        &calldata,
+        operation_u8,
+        U256::ZERO, // safeTxGas
+        U256::ZERO, // baseGas
+        U256::ZERO, // gasPrice
+        Address::ZERO, // gasToken
+        Address::ZERO, // refundReceiver
+        U256::from(rejection_nonce),
+    );
+    
+    println!("  Safe Tx Hash: 0x{:x}", safe_tx_hash);
+    
+    // Sign the transaction hash with hardware wallet
+    let signature_bytes = hw_signer.sign_safe_tx_hash(safe_tx_hash)?;
+    let signature_hex = format!("0x{}", hex::encode(signature_bytes));
+    
+    // Prepare API request (addresses must be checksummed)
+    let request = SafeTxServiceRequest {
+        to: to_addr.to_checksum(None),
+        value: "0".to_string(),
+        data: "0x".to_string(),
+        operation: operation_u8,
+        safe_tx_gas: "0".to_string(),
+        base_gas: "0".to_string(),
+        gas_price: "0".to_string(),
+        gas_token: Address::ZERO.to_checksum(None),
+        refund_receiver: Address::ZERO.to_checksum(None),
+        nonce: rejection_nonce.to_string(),
+        contract_transaction_hash: format!("0x{:x}", safe_tx_hash),
+        sender: sender_address.to_checksum(None),
+        signature: signature_hex,
+        origin: Some("safers-cli".to_string()),
+    };
+    
+    // Submit to Safe Transaction Service
+    println!("\n📤 Submitting rejection to Safe Transaction Service...");
+    
+    let client = reqwest::Client::new();
+    let api_url = format!("{}/api/v1/safes/{}/multisig-transactions/", service_url, safe_address);
+    
+    let response = client
+        .post(&api_url)
+        .json(&request)
+        .send()
+        .await?;
+    
+    let status = response.status();
+    
+    if status.is_success() {
+        println!("✅ On-chain rejection proposed successfully!");
+        println!("\n🔗 View in Safe UI:");
+        
+        let safe_ui_url = match chain.to_lowercase().as_str() {
+            "sepolia" => format!("https://app.safe.global/transactions/queue?safe=sep:{}", safe_address),
+            "mainnet" | "ethereum" => format!("https://app.safe.global/transactions/queue?safe=eth:{}", safe_address),
+            "base" => format!("https://app.safe.global/transactions/queue?safe=base:{}", safe_address),
+            "polygon" | "matic" => format!("https://app.safe.global/transactions/queue?safe=matic:{}", safe_address),
             _ => format!("https://app.safe.global/transactions/queue?safe={}", safe_address),
         };
         

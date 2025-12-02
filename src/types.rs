@@ -6,6 +6,7 @@ pub struct TxBuilderJson {
     pub value: String,
     pub data: Option<String>,
     pub operation: Option<u8>,
+    pub nonce: Option<u64>,
 }
 
 /// Safe Transaction Service API request body

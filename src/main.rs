@@ -1,6 +1,7 @@
 mod cli;
 mod commands;
 mod contracts;
+mod hardware_wallet;
 mod signatures;
 mod types;
 mod utils;
@@ -76,6 +77,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 nonce,
                 private_key,
             } => commands::tx_reject(&safe_address, &chain, &node_url, nonce, &private_key).await,
+            Commands::TxProposeHw {
+                safe_address,
+                chain,
+                node_url,
+                json_file,
+                wallet_type,
+                derivation_path,
+            } => commands::tx_propose_hw(&safe_address, &chain, &node_url, &json_file, &wallet_type, &derivation_path).await,
+            Commands::TxRejectHw {
+                safe_address,
+                chain,
+                node_url,
+                nonce,
+                wallet_type,
+                derivation_path,
+            } => commands::tx_reject_hw(&safe_address, &chain, &node_url, nonce, &wallet_type, &derivation_path).await,
         }
     })
 }

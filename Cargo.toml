@@ -14,3 +14,13 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 redb = "2.1"
 reqwest = { version = "0.12", features = ["json"] }
+
+# Hardware wallet support
+trezor-client = { version = "0.1", features = ["ethereum"], optional = true }
+ledger-transport = { version = "0.11", optional = true }
+ledger-transport-hid = { version = "0.11", optional = true }
+
+[features]
+default = ["trezor", "ledger"]
+trezor = ["dep:trezor-client"]
+ledger = ["dep:ledger-transport", "dep:ledger-transport-hid"]

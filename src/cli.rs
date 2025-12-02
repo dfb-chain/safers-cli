@@ -141,5 +141,40 @@ pub enum Commands {
         /// Private key for signing the rejection (single signer)
         private_key: String,
     },
+    #[command(name = "tx-propose-hw")]
+    TxProposeHw {
+        /// Safe address
+        safe_address: String,
+        /// Chain name (sepolia, mainnet, base, polygon)
+        chain: String,
+        /// Ethereum RPC node URL
+        node_url: String,
+        /// Path to JSON transaction file
+        json_file: String,
+        /// Hardware wallet type (trezor, ledger, ledger-flex)
+        #[arg(short, long, default_value = "trezor")]
+        wallet_type: String,
+        /// Derivation path (default: m/44'/60'/0'/0/0)
+        #[arg(short, long, default_value = "m/44'/60'/0'/0/0")]
+        derivation_path: String,
+    },
+    #[command(name = "tx-reject-hw")]
+    TxRejectHw {
+        /// Safe address
+        safe_address: String,
+        /// Chain name (sepolia, mainnet, base, polygon)
+        chain: String,
+        /// Ethereum RPC node URL
+        node_url: String,
+        /// Specific nonce to reject (optional, defaults to current nonce)
+        #[arg(short, long)]
+        nonce: Option<u64>,
+        /// Hardware wallet type (trezor, ledger, ledger-flex)
+        #[arg(short, long, default_value = "trezor")]
+        wallet_type: String,
+        /// Derivation path (default: m/44'/60'/0'/0/0)
+        #[arg(short = 'p', long, default_value = "m/44'/60'/0'/0/0")]
+        derivation_path: String,
+    },
 }
 
