@@ -15,8 +15,8 @@ impl std::str::FromStr for HardwareWalletType {
         match s.to_lowercase().as_str() {
             "trezor" | "trezor-one" | "trezor_one" | "trezor1" => Ok(HardwareWalletType::TrezorOne),
             "ledger" | "ledger-nano-x" | "ledger_nano_x" | "nano-x" => Ok(HardwareWalletType::LedgerNanoX),
-            "ledger-flex" | "ledger_flex" | "flex" => Ok(HardwareWalletType::LedgerFlex),
-            _ => Err(format!("Unknown hardware wallet type: {}. Use 'trezor', 'ledger', or 'ledger-flex'", s)),
+            "ledger-flex" | "ledger_flex" | "nano-flex" | "nano_flex" | "flex" => Ok(HardwareWalletType::LedgerFlex),
+            _ => Err(format!("Unknown hardware wallet type: {}. Use 'trezor', 'ledger', 'ledger-flex', or 'nano-flex'", s)),
         }
     }
 }
@@ -72,7 +72,7 @@ impl HardwareWalletSigner {
     }
 
     /// Sign a Safe transaction hash with the hardware wallet (EIP-191 personal sign)
-    /// Returns raw signature bytes [r (32) + s (32) + v (1)] with v adjusted for Safe (31 or 32)
+    /// Returns raw signature bytes [r (32) + s (32) + v (1)] with v = 31 or 32 for eth_sign
     pub fn sign_safe_tx_hash(&self, safe_tx_hash: B256) -> Result<[u8; 65], String> {
         match self.wallet_type {
             HardwareWalletType::LedgerNanoX | HardwareWalletType::LedgerFlex => {
@@ -417,7 +417,7 @@ mod trezor_impl {
     
     /// Connect to Trezor with passphrase support and sign in one session
     /// This ensures the passphrase session is maintained for signing
-    /// Returns raw signature bytes with v adjusted for Safe (31 or 32)
+    /// Returns raw signature bytes with v = 31 or 32 for eth_sign
     pub fn connect_and_sign_trezor(
         derivation_path: &str,
         message: &[u8],
@@ -681,6 +681,7 @@ mod ledger_impl {
         let s = B256::from_slice(&response_data[33..65]);
         
         // For Safe eth_sign signatures, v must be 31 or 32
+        // Trezor's ethereum_sign_message applies EIP-191 prefix internally
         // Safe uses v >= 31 to indicate eth_sign (EIP-191 prefixed) signatures
         let v_for_safe = if v >= 27 { 
             (v + 4) as u8  // 27->31, 28->32

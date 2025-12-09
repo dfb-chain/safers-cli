@@ -151,7 +151,7 @@ pub enum Commands {
         node_url: String,
         /// Path to JSON transaction file
         json_file: String,
-        /// Hardware wallet type (trezor, ledger, ledger-flex)
+        /// Hardware wallet type (trezor, ledger, ledger-flex, nano-flex)
         #[arg(short, long, default_value = "trezor")]
         wallet_type: String,
         /// Derivation path (default: m/44'/60'/0'/0/0)
@@ -169,12 +169,38 @@ pub enum Commands {
         /// Specific nonce to reject (optional, defaults to current nonce)
         #[arg(short, long)]
         nonce: Option<u64>,
-        /// Hardware wallet type (trezor, ledger, ledger-flex)
+        /// Hardware wallet type (trezor, ledger, ledger-flex, nano-flex)
         #[arg(short, long, default_value = "trezor")]
         wallet_type: String,
         /// Derivation path (default: m/44'/60'/0'/0/0)
         #[arg(short = 'p', long, default_value = "m/44'/60'/0'/0/0")]
         derivation_path: String,
+    },
+    #[command(name = "tx-confirm-hw")]
+    TxConfirmHw {
+        /// Safe address
+        safe_address: String,
+        /// Chain name (sepolia, mainnet, base, polygon)
+        chain: String,
+        /// Safe transaction hash to confirm
+        safe_tx_hash: String,
+        /// Hardware wallet type (trezor, ledger, ledger-flex, nano-flex)
+        #[arg(short, long, default_value = "trezor")]
+        wallet_type: String,
+        /// Derivation path (default: m/44'/60'/0'/0/0)
+        #[arg(short = 'p', long, default_value = "m/44'/60'/0'/0/0")]
+        derivation_path: String,
+    },
+    #[command(name = "tx-simulate")]
+    TxSimulate {
+        /// Safe address
+        safe_address: String,
+        /// Chain name (sepolia, mainnet, base, polygon)
+        chain: String,
+        /// Ethereum RPC node URL
+        node_url: String,
+        /// Path to JSON transaction file
+        json_file: String,
     },
 }
 

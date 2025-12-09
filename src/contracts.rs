@@ -34,6 +34,12 @@ sol! {
             address gasPayer,
             bytes signature
         ) external returns (bool success);
+        function enableModule(address module) external;
+        function setGuard(address guard) external;
+        function isModuleEnabled(address module) external view returns (bool);
+        function getGuard() external view returns (address);
+        function getThreshold() external view returns (uint256);
+        function getOwners() external view returns (address[]);
     }
 }
 

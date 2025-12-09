@@ -93,6 +93,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 wallet_type,
                 derivation_path,
             } => commands::tx_reject_hw(&safe_address, &chain, &node_url, nonce, &wallet_type, &derivation_path).await,
+            Commands::TxConfirmHw {
+                safe_address,
+                chain,
+                safe_tx_hash,
+                wallet_type,
+                derivation_path,
+            } => commands::tx_confirm_hw(&safe_address, &chain, &safe_tx_hash, &wallet_type, &derivation_path).await,
+            Commands::TxSimulate {
+                safe_address,
+                chain,
+                node_url,
+                json_file,
+            } => commands::tx_simulate(&safe_address, &chain, &node_url, &json_file).await,
         }
     })
 }
