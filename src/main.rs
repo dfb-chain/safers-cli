@@ -69,7 +69,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 node_url,
                 json_file,
                 private_key,
-            } => commands::tx_propose(&safe_address, &chain, &node_url, &json_file, &private_key).await,
+                nonce,
+            } => commands::tx_propose(&safe_address, &chain, &node_url, &json_file, &private_key, nonce).await,
             Commands::TxReject {
                 safe_address,
                 chain,
@@ -106,6 +107,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 node_url,
                 json_file,
             } => commands::tx_simulate(&safe_address, &chain, &node_url, &json_file).await,
+            Commands::KeystoreCreate {
+                private_key,
+                output,
+                password,
+            } => commands::keystore_create(&private_key, &output, password.as_deref()).await,
+            Commands::KeystoreAddress {
+                keystore_path,
+                password,
+            } => commands::keystore_address(&keystore_path, password.as_deref()).await,
+            Commands::SafeConfigure {
+                safe_address,
+                chain,
+                node_url,
+                config_type,
+                address,
+                private_key,
+                nonce,
+            } => commands::safe_configure(&safe_address, &chain, &node_url, &config_type, &address, &private_key, nonce).await,
         }
     })
 }

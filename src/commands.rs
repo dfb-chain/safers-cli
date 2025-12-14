@@ -543,6 +543,8 @@ pub async fn tx_builder(
     };
 
     // Get the nonce for the signer account
+    // Note: This is the BOT WALLET's nonce, not the Safe's nonce
+    // If you get "nonce too low" errors, check for pending transactions from the bot wallet
     let nonce = provider.get_transaction_count(from).await?;
     
     let mut tx = TransactionRequest::default()
@@ -669,6 +671,7 @@ pub async fn tx_propose(
     node_url: &str,
     json_file: &str,
     private_key: &str,
+    nonce: Option<u64>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use alloy::signers::Signer;
     
@@ -702,8 +705,14 @@ pub async fn tx_propose(
     let signer = create_signer_from_hex_with_chain_id(private_key, chain_id)?;
     let sender_address = signer.address();
     
-    // Get Safe nonce from transaction service (this is the Safe's internal nonce)
-    let nonce = get_safe_nonce_from_service(&service_url, safe_address).await?;
+    // Get Safe nonce: use provided nonce, or from JSON, or from transaction service
+    let nonce = if let Some(n) = nonce {
+        n
+    } else if let Some(n) = tx_json.nonce {
+        n
+    } else {
+        get_safe_nonce_from_service(&service_url, safe_address).await?
+    };
     
     println!("📋 Preparing transaction proposal...");
     println!("  Safe: {}", safe_address);
@@ -1552,6 +1561,210 @@ pub async fn tx_simulate(
     println!("      ./target/release/safers-cli tx-propose-hw {} {} {} {} --wallet-type ledger", 
              safe_address, chain, node_url, json_file);
     println!();
+    
+    Ok(())
+}
+
+/// Create a new encrypted keystore file from a private key
+pub async fn keystore_create(
+    private_key: &str,
+    output_path: &str,
+    password: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::{self, Write};
+    
+    // Get password
+    let pwd = if let Some(p) = password {
+        p.to_string()
+    } else {
+        print!("Enter password for keystore: ");
+        io::stdout().flush()?;
+        let mut pwd = String::new();
+        io::stdin().read_line(&mut pwd)?;
+        pwd.trim().to_string()
+    };
+    
+    // Create keystore
+    let keystore_path = crate::utils::create_keystore(private_key, &pwd, output_path)?;
+    
+    println!("✅ Keystore created successfully!");
+    println!("   Path: {}", keystore_path);
+    
+    // Get and display the address
+    let address = crate::utils::get_address_from_keystore(&keystore_path, &pwd)?;
+    println!("   Address: {}", address);
+    
+    Ok(())
+}
+
+/// Get the address from a keystore file
+pub async fn keystore_address(
+    keystore_path: &str,
+    password: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::{self, Write};
+    
+    // Get password
+    let pwd = if let Some(p) = password {
+        p.to_string()
+    } else {
+        print!("Enter keystore password: ");
+        io::stdout().flush()?;
+        let mut pwd = String::new();
+        io::stdin().read_line(&mut pwd)?;
+        pwd.trim().to_string()
+    };
+    
+    // Get address
+    let address = crate::utils::get_address_from_keystore(keystore_path, &pwd)?;
+    
+    println!("Address: {}", address);
+    
+    Ok(())
+}
+
+/// Configure Safe: setGuard, setModuleGuard, or enableModule
+pub async fn safe_configure(
+    safe_address: &str,
+    chain: &str,
+    node_url: &str,
+    config_type: &str,
+    address: &str,
+    private_key: &str,
+    nonce: Option<u64>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use alloy::signers::Signer;
+    use crate::contracts::GnosisSafe;
+    
+    let safe: Address = safe_address.parse()?;
+    let target_addr: Address = address.parse()?;
+    let (chain_id, _, _) = get_chain_config(chain)?;
+    let service_url = get_safe_service_url(chain)?;
+
+    // Determine the function call based on config_type
+    let (to_addr, calldata, description) = match config_type.to_lowercase().as_str() {
+        "setguard" => {
+            let call = GnosisSafe::setGuardCall { guard: target_addr };
+            let data: Bytes = call.abi_encode().into();
+            (safe, data, "Set Transaction Guard")
+        }
+        "setmoduleguard" => {
+            let call = GnosisSafe::setModuleGuardCall { guard: target_addr };
+            let data: Bytes = call.abi_encode().into();
+            (safe, data, "Set Module Guard")
+        }
+        "enablemodule" => {
+            let call = GnosisSafe::enableModuleCall { module: target_addr };
+            let data: Bytes = call.abi_encode().into();
+            (safe, data, "Enable Module")
+        }
+        _ => return Err(format!("Unknown config type: {}. Use: setGuard, setModuleGuard, or enableModule", config_type).into()),
+    };
+
+    // Get provider
+    let _temp_provider = ProviderBuilder::new().on_builtin(node_url).await?;
+    
+    // Create signer
+    let signer = create_signer_from_hex_with_chain_id(private_key, chain_id)?;
+    let sender_address = signer.address();
+    
+    // Get Safe nonce
+    let safe_nonce = if let Some(n) = nonce {
+        n
+    } else {
+        get_safe_nonce_from_service(&service_url, safe_address).await?
+    };
+    
+    println!("📋 Preparing {} transaction...", description);
+    println!("  Safe: {}", safe_address);
+    println!("  Chain: {} (ID: {})", chain, chain_id);
+    println!("  Safe Nonce: {}", safe_nonce);
+    println!("  Sender: {}", sender_address);
+    println!("  Target Address: {}", address);
+    
+    // Show decoded function signature
+    maybe_decode_and_display(&calldata);
+    
+    // Generate Safe transaction hash
+    let safe_tx_hash = generate_safe_tx_hash(
+        safe,
+        chain_id,
+        to_addr,
+        U256::ZERO,
+        &calldata,
+        0, // Operation::Call
+        U256::ZERO, // safeTxGas
+        U256::ZERO, // baseGas
+        U256::ZERO, // gasPrice
+        Address::ZERO, // gasToken
+        Address::ZERO, // refundReceiver
+        U256::from(safe_nonce),
+    );
+    
+    println!("  Safe Tx Hash: 0x{:x}", safe_tx_hash);
+    
+    // Sign the transaction hash
+    let signature = signer.sign_hash(&safe_tx_hash).await?;
+    let signature_bytes = signature.as_bytes();
+    let signature_hex = format!("0x{}", hex::encode(signature_bytes));
+    
+    // Prepare API request
+    let request = SafeTxServiceRequest {
+        to: to_addr.to_checksum(None),
+        value: "0".to_string(),
+        data: format!("0x{}", hex::encode(calldata.as_ref())),
+        operation: 0,
+        safe_tx_gas: "0".to_string(),
+        base_gas: "0".to_string(),
+        gas_price: "0".to_string(),
+        gas_token: Address::ZERO.to_checksum(None),
+        refund_receiver: Address::ZERO.to_checksum(None),
+        nonce: safe_nonce.to_string(),
+        contract_transaction_hash: format!("0x{:x}", safe_tx_hash),
+        sender: sender_address.to_checksum(None),
+        signature: signature_hex,
+        origin: Some("safers-cli".to_string()),
+    };
+    
+    // Submit to Safe Transaction Service
+    println!("\n📤 Submitting to Safe Transaction Service...");
+    
+    let client = reqwest::Client::new();
+    let api_url = format!("{}/api/v1/safes/{}/multisig-transactions/", service_url, safe_address);
+    
+    let response = client
+        .post(&api_url)
+        .json(&request)
+        .send()
+        .await?;
+    
+    let status = response.status();
+    let response_text = response.text().await?;
+    
+    if status.is_success() {
+        println!("✅ {} transaction proposed successfully!", description);
+        println!("\n🔗 View in Safe UI:");
+        
+        let safe_ui_url = match chain.to_lowercase().as_str() {
+            "sepolia" => format!("https://app.safe.global/transactions/queue?safe=sep:{}", safe_address),
+            "mainnet" | "ethereum" => format!("https://app.safe.global/transactions/queue?safe=eth:{}", safe_address),
+            "base" => format!("https://app.safe.global/transactions/queue?safe=base:{}", safe_address),
+            "polygon" | "matic" => format!("https://app.safe.global/transactions/queue?safe=matic:{}", safe_address),
+            "avalanche" | "avax" => format!("https://app.safe.global/transactions/queue?safe=avax:{}", safe_address),
+            _ => format!("https://app.safe.global/transactions/queue?safe={}", safe_address),
+        };
+        
+        println!("   {}", safe_ui_url);
+        println!("\n📝 Next steps:");
+        println!("   1. Review the proposal in Safe UI");
+        println!("   2. Have other owners sign (3-of-4 required)");
+        println!("   3. Execute once all signatures are collected");
+    } else {
+        println!("❌ Failed to propose transaction");
+        println!("Status: {}", status);
+        println!("Error: {}", response_text);
+        return Err(format!("Transaction service error: {}", response_text).into());
+    }
     
     Ok(())
 }

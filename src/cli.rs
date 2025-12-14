@@ -126,6 +126,9 @@ pub enum Commands {
         json_file: String,
         /// Private key for signing the proposal (single signer)
         private_key: String,
+        /// Specific nonce to use (optional, defaults to current Safe nonce or nonce from JSON)
+        #[arg(short, long)]
+        nonce: Option<u64>,
     },
     #[command(name = "tx-reject")]
     TxReject {
@@ -201,6 +204,43 @@ pub enum Commands {
         node_url: String,
         /// Path to JSON transaction file
         json_file: String,
+    },
+    #[command(name = "keystore-create")]
+    KeystoreCreate {
+        /// Private key (hex, without 0x)
+        private_key: String,
+        /// Output path for keystore file
+        #[arg(short, long)]
+        output: String,
+        /// Password for encryption (if not provided, will prompt)
+        #[arg(short, long)]
+        password: Option<String>,
+    },
+    #[command(name = "keystore-address")]
+    KeystoreAddress {
+        /// Path to keystore file
+        keystore_path: String,
+        /// Password (if not provided, will prompt)
+        #[arg(short, long)]
+        password: Option<String>,
+    },
+    #[command(name = "safe-configure")]
+    SafeConfigure {
+        /// Safe address
+        safe_address: String,
+        /// Chain name (base, polygon, avalanche)
+        chain: String,
+        /// Ethereum RPC node URL
+        node_url: String,
+        /// Configuration type: setGuard, setModuleGuard, or enableModule
+        config_type: String,
+        /// Address to set (guard address or module address)
+        address: String,
+        /// Private key for signing the proposal
+        private_key: String,
+        /// Specific nonce to use (optional)
+        #[arg(short, long)]
+        nonce: Option<u64>,
     },
 }
 

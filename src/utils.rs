@@ -2,13 +2,114 @@ use alloy::primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::signers::Signer;
 use alloy::providers::Provider;
+use std::path::Path;
+use std::io::{self, Write};
 
-/// Helper function to create signer from hex-encoded private key with chain ID
+/// Helper function to create signer from hex-encoded private key or keystore file with chain ID
 pub fn create_signer_from_hex_with_chain_id(private_key_hex: &str, chain_id: u64) -> Result<PrivateKeySigner, Box<dyn std::error::Error>> {
-    let bytes = hex::decode(private_key_hex)?;
+    // Check if the input is a file path (keystore)
+    if Path::new(private_key_hex).exists() {
+        return create_signer_from_keystore_with_chain_id(private_key_hex, chain_id);
+    }
+    
+    // Otherwise, treat as hex-encoded private key
+    // Strip whitespace and 0x prefix if present
+    let cleaned = private_key_hex.trim().strip_prefix("0x").unwrap_or(private_key_hex.trim());
+    
+    // Validate length (should be 64 hex characters = 32 bytes)
+    if cleaned.len() != 64 {
+        return Err(format!(
+            "Invalid private key length: expected 64 hex characters (32 bytes), got {} characters. \
+            Make sure there are no spaces, newlines, or extra characters.",
+            cleaned.len()
+        ).into());
+    }
+    
+    let bytes = hex::decode(cleaned)?;
+    if bytes.len() != 32 {
+        return Err(format!("Invalid private key: decoded to {} bytes, expected 32 bytes", bytes.len()).into());
+    }
+    
     let b256 = B256::from_slice(&bytes);
     let signer = PrivateKeySigner::from_bytes(&b256)?;
     Ok(signer.with_chain_id(Some(chain_id)))
+}
+
+/// Helper function to create signer from keystore file with chain ID
+pub fn create_signer_from_keystore_with_chain_id(keystore_path: &str, chain_id: u64) -> Result<PrivateKeySigner, Box<dyn std::error::Error>> {
+    // Prompt for password
+    print!("Enter keystore password: ");
+    io::stdout().flush()?;
+    
+    let mut password = String::new();
+    io::stdin().read_line(&mut password)?;
+    let password = password.trim();
+    
+    // Decrypt keystore
+    let private_key = decrypt_keystore(keystore_path, password)?;
+    
+    let b256 = B256::from_slice(&private_key);
+    let signer = PrivateKeySigner::from_bytes(&b256)?;
+    Ok(signer.with_chain_id(Some(chain_id)))
+}
+
+/// Create a new encrypted keystore file from a private key
+pub fn create_keystore(
+    private_key_hex: &str,
+    password: &str,
+    output_path: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    // Parse private key
+    let cleaned = private_key_hex.trim().strip_prefix("0x").unwrap_or(private_key_hex.trim());
+    
+    if cleaned.len() != 64 {
+        return Err(format!(
+            "Invalid private key length: expected 64 hex characters (32 bytes), got {} characters",
+            cleaned.len()
+        ).into());
+    }
+    
+    let private_key = hex::decode(cleaned)?;
+    if private_key.len() != 32 {
+        return Err(format!("Invalid private key: decoded to {} bytes, expected 32 bytes", private_key.len()).into());
+    }
+    
+    // Create keystore using web3-keystore
+    use web3_keystore::{encrypt, KeyStore};
+    use std::fs;
+    
+    let keystore: KeyStore = encrypt(&mut rand::thread_rng(), &private_key, password, None, None)?;
+    let keystore_json = serde_json::to_string_pretty(&keystore)?;
+    
+    // Write to file
+    fs::write(output_path, keystore_json)?;
+    
+    Ok(output_path.to_string())
+}
+
+/// Decrypt a keystore file and return the private key
+pub fn decrypt_keystore(
+    keystore_path: &str,
+    password: &str,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    use web3_keystore::{decrypt, KeyStore};
+    use std::fs;
+    
+    let keystore_json = fs::read_to_string(keystore_path)?;
+    let keystore: KeyStore = serde_json::from_str(&keystore_json)?;
+    let private_key = decrypt(&keystore, password)?;
+    Ok(private_key)
+}
+
+/// Get the address from a keystore file
+pub fn get_address_from_keystore(
+    keystore_path: &str,
+    password: &str,
+) -> Result<Address, Box<dyn std::error::Error>> {
+    let private_key = decrypt_keystore(keystore_path, password)?;
+    let b256 = B256::from_slice(&private_key);
+    let signer = PrivateKeySigner::from_bytes(&b256)?;
+    Ok(signer.address())
 }
 
 /// Map chain name to chain ID and Safe contract addresses
@@ -34,6 +135,11 @@ pub fn get_chain_config(chain: &str) -> Result<(u64, Address, Address), Box<dyn 
             "0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2".parse()?, // ProxyFactory
             "0xd9Db270c1B5E3Bd161E8c8503c55cEABeE709552".parse()?, // Singleton
         )),
+        "avalanche" | "avax" => Ok((
+            43114,
+            "0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2".parse()?, // ProxyFactory
+            "0xd9Db270c1B5E3Bd161E8c8503c55cEABeE709552".parse()?, // Singleton
+        )),
         _ => Err(format!("Unsupported chain: {}", chain).into()),
     }
 }
@@ -45,6 +151,7 @@ pub fn get_safe_service_url(chain: &str) -> Result<String, Box<dyn std::error::E
         "mainnet" | "ethereum" => Ok("https://safe-transaction-mainnet.safe.global".to_string()),
         "base" => Ok("https://safe-transaction-base.safe.global".to_string()),
         "polygon" | "matic" => Ok("https://safe-transaction-polygon.safe.global".to_string()),
+        "avalanche" | "avax" => Ok("https://safe-transaction-avalanche.safe.global".to_string()),
         _ => Err(format!("No Safe Transaction Service for chain: {}", chain).into()),
     }
 }

@@ -7,7 +7,9 @@ A Rust alternative to safe-cli for Gnosis Safe interactions, built with Alloy.
 - **Direct Execution**: Execute transactions immediately with a private key
 - **Transaction Proposals**: Propose transactions to Safe Transaction Service for multi-sig approval
 - **Hardware Wallet Support**: Sign with Trezor Model One or Ledger devices
-- **Multi-chain Support**: Works with any EVM chain (Ethereum, Polygon, Arbitrum, etc.)
+- **Multi-chain Support**: Works with any EVM chain (Ethereum, Polygon, Arbitrum, Base, Avalanche, etc.)
+- **Encrypted Keystores**: Create and use JSON encrypted keystore files (Web3 Secret Storage format)
+- **Safe Configuration**: Easily configure Safe wallets with guards and modules
 
 ### Commands
 
@@ -24,13 +26,23 @@ A Rust alternative to safe-cli for Gnosis Safe interactions, built with Alloy.
 
 7. **tx-propose** - Propose a transaction using a private key
 8. **tx-propose-hw** - Propose a transaction using a hardware wallet (Trezor/Ledger)
+9. **tx-reject** - Propose an on-chain rejection transaction to cancel pending transactions
+10. **tx-reject-hw** - Propose a rejection transaction using a hardware wallet
+11. **tx-confirm-hw** - Confirm a pending Safe transaction using a hardware wallet
+12. **tx-simulate** - Simulate and validate a Safe transaction before proposing
+13. **safe-configure** - Configure Safe with guards and modules (setGuard, setModuleGuard, enableModule)
+
+#### Keystore Management
+
+14. **keystore-create** - Create an encrypted JSON keystore file from a private key
+15. **keystore-address** - Get the Ethereum address from a keystore file
 
 #### Signature Database
 
-9. **sig-sync** - Sync function signatures from 4byte.directory
-10. **sig-lookup** - Look up a function signature by selector
-11. **sig-decode** - Decode calldata using known signatures
-12. **sig-stats** - Show signature database statistics
+16. **sig-sync** - Sync function signatures from 4byte.directory
+17. **sig-lookup** - Look up a function signature by selector
+18. **sig-decode** - Decode calldata using known signatures
+19. **sig-stats** - Show signature database statistics
 
 ### Version
 
@@ -143,6 +155,111 @@ safers-cli tx-builder \
   your_private_key_hex
 ```
 
+### Configure Safe (Guards and Modules)
+
+Configure a Safe with transaction guard, module guard, and enable modules:
+
+```bash
+# Set Transaction Guard
+safers-cli safe-configure \
+  0xYourSafeAddress \
+  base \
+  https://base.llamarpc.com \
+  setGuard \
+  0x9ECfaA12c2b8C82834B761cDCc42A4671f7Fc11e \
+  your_private_key_hex
+
+# Set Module Guard
+safers-cli safe-configure \
+  0xYourSafeAddress \
+  base \
+  https://base.llamarpc.com \
+  setModuleGuard \
+  0x9ECfaA12c2b8C82834B761cDCc42A4671f7Fc11e \
+  your_private_key_hex
+
+# Enable Module
+safers-cli safe-configure \
+  0xYourSafeAddress \
+  base \
+  https://base.llamarpc.com \
+  enableModule \
+  0x349B8dE9c7853E34b377bDEA7C93754285B3d2f4 \
+  your_private_key_hex
+```
+
+**Batch Configuration Script:**
+
+Use the helper script to propose all three configuration transactions with consecutive nonces:
+
+```bash
+./scripts/configure-safes.sh \
+  0xYourSafeAddress \
+  base \
+  https://base.llamarpc.com \
+  your_private_key_hex
+```
+
+### Keystore Management
+
+Create an encrypted keystore file:
+
+```bash
+safers-cli keystore-create \
+  your_private_key_hex \
+  --output ./my-keystore.json
+```
+
+Get address from a keystore:
+
+```bash
+safers-cli keystore-address ./my-keystore.json
+```
+
+Use keystore in commands (automatically detected if file path is provided):
+
+```bash
+# Instead of hex private key, use keystore file path
+safers-cli tx-propose \
+  0xYourSafeAddress \
+  base \
+  https://base.llamarpc.com \
+  transaction.json \
+  ./my-keystore.json  # File path instead of hex key
+```
+
+### Reject Pending Transactions
+
+Propose an on-chain rejection to cancel pending transactions:
+
+```bash
+# With private key
+safers-cli tx-reject \
+  0xYourSafeAddress \
+  base \
+  https://base.llamarpc.com \
+  your_private_key_hex
+
+# With hardware wallet
+safers-cli tx-reject-hw \
+  0xYourSafeAddress \
+  base \
+  https://base.llamarpc.com \
+  --wallet-type trezor
+```
+
+### Simulate Transaction
+
+Validate a transaction before proposing:
+
+```bash
+safers-cli tx-simulate \
+  0xYourSafeAddress \
+  base \
+  https://base.llamarpc.com \
+  transaction.json
+```
+
 ## Hardware Wallet Setup
 
 ### Trezor
@@ -183,12 +300,11 @@ The following chains are supported for transaction proposals:
 
 - `ethereum` / `mainnet`
 - `polygon` / `matic`
-- `arbitrum`
-- `optimism`
 - `base`
-- `gnosis`
+- `avalanche` / `avax`
 - `sepolia`
-- `goerli`
+
+Note: Additional chains can be added by updating the chain configuration in the codebase.
 
 ## Technical Details
 
@@ -196,6 +312,8 @@ The following chains are supported for transaction proposals:
 - Uses `alloy-sol-types` for type-safe ABI encoding
 - Hardware wallet support via `trezor-client` and `ledger-transport-hid`
 - Signatures use eth_sign (EIP-191) format for Safe compatibility
+- Keystore encryption using Web3 Secret Storage format (via `web3-keystore`)
+- Automatic nonce management for consecutive transaction proposals
 
 ## License
 
